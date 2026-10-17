@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "preset": "wpa2",
+  "output": "../wifi.txt",
+  "seeds": [
+    "coppermoon",
+    "silverfox"
+  ],
+  "min_length": 1,
+  "max_length": 40,
+  "transforms": {
+    "case": [
+      "upper",
+      "capitalized"
+    ],
+    "suffixes": [
+      "42"
+    ]
+  },
+  "max_candidates": 100
+}

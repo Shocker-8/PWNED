@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "seeds": [
+    "copper",
+    "moon"
+  ],
+  "output": "../priorities.jsonl",
+  "output_format": "jsonl",
+  "provenance": true,
+  "priorities": [
+    "affix",
+    "case",
+    "leet"
+  ],
+  "family_quotas": {
+    "case": 100,
+    "leet": 100,
+    "affix": 100
+  },
+  "source_scheduling": "round_robin",
+  "transforms": {
+    "case": [
+      "upper",
+      "capitalized"
+    ],
+    "prefixes": [
+      "x"
+    ],
+    "suffixes": [
+      "42"
+    ],
+    "leet": {
+      "o": [
+        "0"
+      ]
+    },
+    "max_variants": 32
+  },
+  "combinations": {
+    "enabled": true
+  },
+  "max_candidates": 100,
+  "max_attempts": 1000,
+  "max_input_records": 10000,
+  "max_output_bytes": 100000,
+  "max_seconds": null
+}

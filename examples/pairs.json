@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "mode": "pairs",
+  "output_format": "jsonl",
+  "output": "../pairs.jsonl",
+  "languages": [
+    "en"
+  ],
+  "profiles": [
+    {
+      "id": "profile-one",
+      "usernames": [
+        "casey.example"
+      ],
+      "seeds": [
+        "copper",
+        "moon"
+      ],
+      "max_candidates": 20
+    },
+    {
+      "id": "profile-two",
+      "usernames": [
+        "riley.example"
+      ],
+      "seeds": [
+        "silver",
+        "fox"
+      ],
+      "max_candidates": 20
+    }
+  ],
+  "transforms": {
+    "case": [
+      "upper",
+      "capitalized"
+    ]
+  },
+  "combinations": {
+    "enabled": true,
+    "max_tokens": 2
+  },
+  "max_candidates": 40
+}

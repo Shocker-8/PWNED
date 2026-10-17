@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "seeds": [
+    "moon",
+    "copper"
+  ],
+  "output": "../candidates.txt",
+  "min_length": 4,
+  "max_length": 20,
+  "max_candidates": 100,
+  "max_attempts": 1000,
+  "max_output_bytes": 10000,
+  "transforms": {
+    "case": [
+      "upper",
+      "capitalized"
+    ],
+    "suffixes": [
+      "42"
+    ],
+    "leet": {
+      "o": [
+        "0"
+      ]
+    },
+    "max_replaced": 1,
+    "max_variants": 32
+  },
+  "combinations": {
+    "enabled": true,
+    "max_tokens": 2,
+    "separators": [
+      "",
+      "-"
+    ],
+    "max_combinations": 100
+  },
+  "languages": [
+    "en",
+    "pt"
+  ]
+}

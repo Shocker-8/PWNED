@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "mode": "usernames",
+  "output": "../usernames.txt",
+  "profiles": [
+    {
+      "id": "profile-one",
+      "usernames": [
+        "Casey.Example"
+      ],
+      "first_name": "Casey",
+      "last_name": "Morgan",
+      "templates": [
+        "first.last",
+        "first-initial+last"
+      ]
+    },
+    {
+      "id": "profile-two",
+      "first_name": "Riley",
+      "last_name": "Stone",
+      "templates": [
+        "first.last",
+        "first-initial+last"
+      ]
+    }
+  ],
+  "max_candidates": 50
+}
