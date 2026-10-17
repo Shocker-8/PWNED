@@ -24,8 +24,7 @@ if SRC.is_dir():
 
 from candidatelab import __version__  # noqa: E402
 from candidatelab.logo import print_banner  # noqa: E402
-from candidatelab.policyaudit import (REQUIRED_MODEL, RuntimeConfigError,  # noqa: E402
-                                      resolve_runtime_model)
+from candidatelab.policyaudit import RuntimeConfigError, resolve_runtime_model  # noqa: E402
 from candidatelab.presentation import Presentation  # noqa: E402
 from candidatelab import wordlistgen  # noqa: E402
 
@@ -58,8 +57,10 @@ def _model_banner(display: Presentation) -> bool:
 
 def _report_model_failure(display: Presentation, exc: Exception) -> None:
     display.error(str(exc))
-    display.text("Nothing was written. Check that LM Studio is serving "
-                 f"{REQUIRED_MODEL}, then try again.", style="retro.notice")
+    display.text("Nothing was written. If the message mentions the token budget, the local "
+                 "model is reasoning too much — lower its reasoning effort in LM Studio or load "
+                 "a lighter model; otherwise confirm LM Studio is serving the model.",
+                 style="retro.notice")
 
 
 def _generate(display: Presentation, key: str) -> None:

@@ -16,7 +16,7 @@ class FakeAgent:
 
     def expand(self, profile_text, known):
         if self._expansions is None:
-            return {"expansions": []}
+            return {"words": []}
         return self._expansions
 
 
@@ -33,6 +33,33 @@ def test_accept_extraction_keeps_only_grounded_tokens():
 def test_accept_extraction_rejects_bad_schema():
     with pytest.raises(ValueError):
         W.accept_extraction({"base_words": []}, "text")
+
+
+def test_post_retries_with_larger_budget_on_length_then_succeeds():
+    client = W.TargetGemma.__new__(W.TargetGemma)  # no network/__init__
+    calls = []
+
+    def fake_request(system, payload, schema, name, max_tokens):
+        calls.append(max_tokens)
+        if len(calls) == 1:
+            return "length", ""                      # reasoning ate the budget
+        return "stop", '{"words": ["zelda"]}'          # succeeds with more room
+
+    client._request = fake_request
+    out = client._post("sys", {}, {}, "x", 2500)
+    assert out == {"words": ["zelda"]}
+    assert calls == [2500, 5000]                        # grew the budget once
+
+
+def test_post_raises_clear_error_when_budget_exhausted():
+    client = W.TargetGemma.__new__(W.TargetGemma)
+
+    def always_length(system, payload, schema, name, max_tokens):
+        return "length", ""
+
+    client._request = always_length
+    with pytest.raises(ValueError, match="token budget reasoning"):
+        client._post("sys", {}, {}, "x", 8000)
 
 
 def test_accept_expansions_sanitises_and_dedupes():

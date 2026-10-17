@@ -114,7 +114,12 @@ class TargetGemma:
         self.url = self.base_url + "/chat/completions"
         self.opener = build_opener(ProxyHandler({}), _NoRedirect())
 
-    def _post(self, system, payload, schema, name, max_tokens):
+    # Hard ceiling for the auto-grow retry (stays well within model context).
+    _MAX_TOKEN_CEILING = 8000
+
+    def _request(self, system, payload, schema, name, max_tokens):
+        """One request. Returns (finish_reason, content). ``content`` is the final
+        assistant message only — never the reasoning draft, which is unreliable."""
         body = json.dumps({"model": self.model,
                            "messages": [{"role": "system", "content": system},
                                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
@@ -124,19 +129,40 @@ class TargetGemma:
                           ensure_ascii=False).encode("utf-8")
         request = Request(self.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with self.opener.open(request, timeout=180) as response:
-                raw = response.read(65537)
+            with self.opener.open(request, timeout=300) as response:
+                raw = response.read(1 << 20)
         except OSError as exc:
             raise ValueError(f"could not reach the local model at {self.base_url}: {exc}") from exc
         result = json.loads(raw)
         if not isinstance(result, dict) or result.get("model") != self.model:
             raise ValueError("response model does not match the configured model")
         try:
-            content = result["choices"][0]["message"].get("content")
+            choice = result["choices"][0]
+            content = choice["message"].get("content")
         except (KeyError, IndexError, TypeError) as exc:
             raise ValueError("invalid LM Studio response structure") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("the model returned no final JSON (token budget consumed by reasoning)")
+        return choice.get("finish_reason"), content
+
+    def _post(self, system, payload, schema, name, max_tokens):
+        """Request structured JSON, growing the output budget once if the model
+        burns the whole budget on reasoning (finish_reason='length')."""
+        budget = max_tokens
+        attempts = 0
+        while True:
+            attempts += 1
+            finish, content = self._request(system, payload, schema, name, budget)
+            if isinstance(content, str) and content.strip():
+                break
+            # Empty final message: usually the reasoning ate the whole budget.
+            if finish == "length" and budget < self._MAX_TOKEN_CEILING:
+                budget = min(budget * 2, self._MAX_TOKEN_CEILING)
+                continue
+            if finish == "length":
+                raise ValueError(
+                    f"the model used its whole token budget reasoning before answering "
+                    f"(finish_reason=length, up to {budget} tokens). Load a model with lighter "
+                    f"reasoning, or lower the reasoning effort in LM Studio.")
+            raise ValueError("the model returned an empty response")
         stripped = content.strip()
         if stripped.startswith("```"):
             stripped = stripped.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -154,7 +180,7 @@ class TargetGemma:
                       "numbers": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 16}},
                       "dates": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 10}},
                       "next_question": {"type": ["string", "null"], "maxLength": 160}}}
-        return self._post(_SYSTEM, payload, schema, "target_interview", 900)
+        return self._post(_SYSTEM, payload, schema, "target_interview", 2500)
 
     def expand(self, profile_text: str, known_words) -> dict:
         """Ask the model to funnel the profile into related candidate words."""
