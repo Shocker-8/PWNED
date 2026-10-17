@@ -50,15 +50,10 @@ _SYSTEM = (
 )
 
 _EXPAND_SYSTEM = (
-    "You assist an AUTHORIZED penetration test by widening a target password profile. "
-    "Given what is known about the target, suggest ADDITIONAL candidate words that this "
-    "kind of person commonly bases passwords on, FUNNELLING from their stated interests: "
-    "e.g. if they game, the names of likely games AND those games' characters, places and "
-    "lore; favourite sports teams and players; bands and songs; movies/shows; pet breeds; "
-    "home town / country landmarks; notable years. Only plausible associations derived from "
-    "the profile, not random words. Return only JSON {expansions:[{word, theme}]}: word is a "
-    "single lowercase token with no spaces; theme is a short label such as 'game', 'character', "
-    "'team', 'band', 'place'. Suggest at most 40. These are proposals; the operator reviews them."
+    "Authorized pentest wordlist helper. From the target's interests, list up to 20 "
+    "single lowercase words a password might use: their games and those games' characters "
+    "or places, sports teams, bands, movies, pets, home places. Related to the profile, not "
+    "random. Answer directly as JSON {\"words\": [...]}, no explanation."
 )
 
 
@@ -163,15 +158,11 @@ class TargetGemma:
 
     def expand(self, profile_text: str, known_words) -> dict:
         """Ask the model to funnel the profile into related candidate words."""
-        payload = {"target_profile": str(profile_text)[:2000], "known_base_words": list(known_words)[:60]}
-        schema = {"type": "object", "additionalProperties": False,
-                  "required": ["expansions"], "properties": {
-                      "expansions": {"type": "array", "maxItems": 40, "items": {
-                          "type": "object", "additionalProperties": False,
-                          "required": ["word", "theme"], "properties": {
-                              "word": {"type": "string", "maxLength": 48},
-                              "theme": {"type": "string", "maxLength": 32}}}}}}
-        return self._post(_EXPAND_SYSTEM, payload, schema, "target_expansion", 1400)
+        payload = {"target_profile": str(profile_text)[:1500], "known_base_words": list(known_words)[:40]}
+        schema = {"type": "object", "additionalProperties": False, "required": ["words"],
+                  "properties": {"words": {"type": "array", "maxItems": 20,
+                                           "items": {"type": "string", "maxLength": 48}}}}
+        return self._post(_EXPAND_SYSTEM, payload, schema, "target_expansion", 3500)
 
 
 # --------------------------------------------------------------------------- #
@@ -209,31 +200,25 @@ def accept_extraction(proposal: dict, text: str):
 
 
 def accept_expansions(proposal: dict, existing):
-    """Validate and sanitise model expansion suggestions into [(word, theme)].
+    """Validate and sanitise model expansion suggestions into a list of words.
 
     Unlike extraction, these are NOT required to appear in the operator's text —
     expansion is the model funnelling interests into related words. They are still
     bounded, control-stripped, single-token and deduplicated, and the operator
     reviews them before any are used."""
-    if not isinstance(proposal, dict) or "expansions" not in proposal or not isinstance(proposal["expansions"], list):
+    if not isinstance(proposal, dict) or "words" not in proposal or not isinstance(proposal["words"], list):
         raise ValueError("invalid expansion response schema")
     have = {w.casefold() for w in existing}
     seen, out = set(have), []
-    for item in proposal["expansions"][:40]:
-        if not isinstance(item, dict):
-            continue
-        raw = str(item.get("word", "")).strip()
+    for item in proposal["words"][:30]:
+        raw = str(item).strip()
         if not raw or any(ch.isspace() for ch in raw):
             continue  # single tokens only; no spaces/tabs/newlines
         word = "".join(ch for ch in raw if unicodedata.category(ch)[0] != "C")
-        theme = "".join(ch for ch in str(item.get("theme", "")).strip()
-                        if unicodedata.category(ch)[0] != "C")[:32] or "related"
-        if not word or len(word.encode("utf-8")) > 48:
-            continue
-        if word.casefold() in seen:
+        if not word or len(word.encode("utf-8")) > 48 or word.casefold() in seen:
             continue
         seen.add(word.casefold())
-        out.append((word, theme))
+        out.append(word)
     return out
 
 
@@ -428,11 +413,11 @@ def _expand_phase(agent, read, write, seeds, transcript):
         write("The model suggested no additional words.")
         return []
     write("Suggested related words (review before adding):")
-    for index, (word, theme) in enumerate(suggestions, start=1):
-        write(f"  {index:>2}. {word}  [{theme}]")
+    for index, word in enumerate(suggestions, start=1):
+        write(f"  {index:>2}. {word}")
     chosen = _parse_selection(
         read("Add which? [all / none / comma-separated numbers]:"), len(suggestions))
-    added = [suggestions[i][0] for i in sorted(chosen)]
+    added = [suggestions[i] for i in sorted(chosen)]
     write(f"Added {len(added)} suggested word(s).")
     return added
 

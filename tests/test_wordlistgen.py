@@ -36,16 +36,14 @@ def test_accept_extraction_rejects_bad_schema():
 
 
 def test_accept_expansions_sanitises_and_dedupes():
-    proposal = {"expansions": [
-        {"word": "zelda", "theme": "game"},
-        {"word": "link", "theme": "character"},
-        {"word": "nuno", "theme": "name"},        # already known -> dropped
-        {"word": "bad word", "theme": "x"},         # has space -> dropped
-        {"word": "zelda", "theme": "dup"},          # duplicate -> dropped
+    proposal = {"words": [
+        "zelda", "link",
+        "nuno",        # already known -> dropped
+        "bad word",    # has space -> dropped
+        "zelda",       # duplicate -> dropped
     ]}
     out = W.accept_expansions(proposal, existing=["nuno"])
-    words = [w for w, _ in out]
-    assert words == ["zelda", "link"]
+    assert out == ["zelda", "link"]
 
 
 def test_accept_expansions_rejects_bad_schema():
@@ -62,15 +60,14 @@ def test_parse_selection_variants():
 
 
 def test_expand_phase_adds_selected_words():
-    agent = FakeAgent([], expansions={"expansions": [
-        {"word": "zelda", "theme": "game"}, {"word": "link", "theme": "character"}]})
+    agent = FakeAgent([], expansions={"words": ["zelda", "link"]})
     reads = iter(["y", "1"])  # accept expansion, pick #1 only
     added = W._expand_phase(agent, lambda q: next(reads), lambda m: None, seeds=["nuno"], transcript="likes zelda")
     assert added == ["zelda"]
 
 
 def test_expand_phase_declined_returns_nothing():
-    agent = FakeAgent([], expansions={"expansions": [{"word": "zelda", "theme": "game"}]})
+    agent = FakeAgent([], expansions={"words": ["zelda"]})
     reads = iter(["n"])
     added = W._expand_phase(agent, lambda q: next(reads), lambda m: None, seeds=[], transcript="likes zelda")
     assert added == []
