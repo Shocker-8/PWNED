@@ -139,13 +139,12 @@ def main(argv=None) -> int:
     display = Presentation(sys.stderr)
     animate = sys.stdout.isatty()
     print_banner(animate=animate)
-    display.text(f"CandidateLab v{__version__} — custom wordlist generator (local Gemma)",
+    display.text(f"PWNED v{__version__} — custom wordlist generator (local Gemma)",
                  style="retro.title")
-    display.text("Authorized testing only. Local & offline; produces a candidate wordlist, "
-                 "never attempts a login.", style="retro.notice")
+    display.text("Local & offline; produces a candidate wordlist.", style="retro.notice")
     if not sys.stdin.isatty():
         display.error("the interactive menu needs a terminal; "
-                      "use the `candidatelab` CLI for non-interactive runs")
+                      "use the `PWNED` CLI for non-interactive runs")
         return 1
     try:
         _menu(display)
