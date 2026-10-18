@@ -11,7 +11,7 @@ class FakeAgent:
         self.scripts = list(scripts)
         self._expansions = expansions
 
-    def extract(self, text, known, asked):
+    def extract(self, text, known, asked, known_languages=()):
         return self.scripts.pop(0)
 
     def expand(self, profile_text, known):
@@ -25,12 +25,18 @@ def test_accept_extraction_keeps_derived_words_and_sanitizes():
     # that are not literally in the operator's text. We only sanitise/dedupe.
     proposal = {"base_words": ["Nuno", "biggie", "big guy", "nuno", "bad\x07ctrl"],
                 "numbers": ["1986", "age 39"], "dates": ["1986-05-02", "not-a-date"],
-                "next_question": "Any pets?"}
-    words, numbers, dates, question = W.accept_extraction(proposal, "")
+                "languages": ["PT", "english", "pt"], "next_question": "Any pets?"}
+    words, numbers, dates, languages, question = W.accept_extraction(proposal)
     assert words == ["nuno", "biggie", "big", "guy", "badctrl"]  # lowercased, split, deduped, control stripped
     assert numbers == ["1986", "39"]                              # digits pulled from "age 39"
     assert dates == ["1986-05-02"]                                # invalid date dropped
+    assert languages == ["pt", "english"]                         # lowercased, deduped
     assert question == "Any pets?"
+
+
+def test_language_codes_maps_names_and_keeps_valid_codes():
+    assert W.language_codes(["english", "pt", "Portuguese", "es"]) == ("en", "pt", "es")
+    assert W.language_codes(["not a language!"]) == ()
 
 
 def test_accept_extraction_rejects_bad_schema():

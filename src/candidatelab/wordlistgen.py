@@ -52,7 +52,14 @@ _SYSTEM = (
     "{base_words, numbers, dates, next_question}: base_words are lowercase single "
     "tokens with no spaces; numbers are digit strings (you MAY infer a birth year from "
     "an age); dates are YYYY-MM-DD; next_question is the one short question that would "
-    "most improve the wordlist, or null when you have enough."
+    "most improve the wordlist, or null when you have enough. Draw words from EVERY "
+    "language relevant to the target — their native/local language AND English, plus "
+    "any other the context implies — e.g. a Portuguese target yields both 'unemployed' "
+    "and 'desempregado'; report those languages as lowercase ISO codes in `languages` "
+    "(en, pt, es, fr, de, it) and keep using known_languages. Ask about anything not "
+    "yet covered that could seed a password: partners, children, pets, birthdays and "
+    "anniversaries, employer, school, hobbies, teams, bands, cars, favourite things, "
+    "nicknames and catchphrases."
 )
 
 _EXPAND_SYSTEM = (
@@ -177,15 +184,17 @@ class TargetGemma:
         except ValueError as exc:
             raise ValueError("the model did not return valid JSON") from exc
 
-    def extract(self, new_text: str, known_words, asked_questions) -> dict:
-        payload = {"new_text": new_text, "known_base_words": list(known_words)[:40],
+    def extract(self, new_text: str, known_words, asked_questions, known_languages=()) -> dict:
+        payload = {"new_text": str(new_text)[:4096], "known_base_words": list(known_words)[:40],
                    "already_asked": list(asked_questions)[:8],
+                   "known_languages": list(known_languages)[:6],
                    "current_year": datetime.now(timezone.utc).year}
         schema = {"type": "object", "additionalProperties": False,
-                  "required": ["base_words", "numbers", "dates", "next_question"], "properties": {
+                  "required": ["base_words", "numbers", "dates", "languages", "next_question"], "properties": {
                       "base_words": {"type": "array", "maxItems": 30, "items": {"type": "string", "maxLength": 48}},
                       "numbers": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 16}},
                       "dates": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 10}},
+                      "languages": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 16}},
                       "next_question": {"type": ["string", "null"], "maxLength": 160}}}
         return self._post(_SYSTEM, payload, schema, "target_interview", 2500)
 
@@ -217,7 +226,8 @@ def accept_extraction(proposal: dict, text: str = ""):
     length and count, and de-duplicate. Numbers are digit strings (a birth year
     inferred from an age is welcome); dates must be valid ISO. Raises ValueError on
     a structurally malformed proposal."""
-    if not isinstance(proposal, dict) or set(proposal) != {"base_words", "numbers", "dates", "next_question"}:
+    required = {"base_words", "numbers", "dates", "next_question"}
+    if not isinstance(proposal, dict) or not required <= set(proposal) or set(proposal) - (required | {"languages"}):
         raise ValueError("invalid interview response schema")
     if not isinstance(proposal["base_words"], list) or not isinstance(proposal["numbers"], list) \
             or not isinstance(proposal["dates"], list):
@@ -242,10 +252,31 @@ def accept_extraction(proposal: dict, text: str = ""):
             continue
         if token not in dates:
             dates.append(token)
+    languages = []
+    for value in proposal.get("languages", []) if isinstance(proposal.get("languages", []), list) else []:
+        code = _clean_token(value)
+        if code and code not in languages:
+            languages.append(code)
     question = proposal["next_question"]
     if question is not None and not isinstance(question, str):
         raise ValueError("invalid next_question")
-    return words[:80], numbers[:16], dates[:8], question
+    return words[:80], numbers[:16], dates[:8], languages[:6], question
+
+
+_LANGUAGE_CODES = {"english": "en", "portuguese": "pt", "spanish": "es", "french": "fr",
+                   "german": "de", "italian": "it", "dutch": "nl", "galician": "gl"}
+
+
+def language_codes(names):
+    """Map detected language names/codes to validated ISO codes for Config."""
+    import re
+    codes = []
+    for name in names:
+        token = str(name).strip().lower()
+        code = _LANGUAGE_CODES.get(token, token)
+        if re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", code) and code not in codes:
+            codes.append(code)
+    return tuple(codes[:16])
 
 
 def accept_expansions(proposal: dict, existing):
@@ -275,7 +306,7 @@ def accept_expansions(proposal: dict, existing):
 # Build + run the generation from gathered data and plain y/n knobs
 # --------------------------------------------------------------------------- #
 def build_config(context, seeds, numbers, dates, *, combine, case, leet,
-                 min_length, max_length, inputs, output,
+                 min_length, max_length, inputs, output, languages=(),
                  max_candidates=500000, max_attempts=10000000):
     """Assemble a Config for the engine from gathered target data and knobs."""
     preset = DEFAULTS[context]["preset"]
@@ -287,10 +318,11 @@ def build_config(context, seeds, numbers, dates, *, combine, case, leet,
         enabled=combine, max_tokens=2, separators=("", "-", "_", "."),
         numeric_tokens=tuple(numbers), dates=tuple(dates),
         date_formats=DATE_FORMATS if dates else ())
+    codes = language_codes(languages)
     return Config(
         seeds=tuple(dict.fromkeys(seeds)), inputs=tuple(inputs), output=str(output),
         mode="passwords", preset=preset, min_length=min_length, max_length=max_length,
-        transforms=transforms, combinations=combinations,
+        languages=codes or ("en",), transforms=transforms, combinations=combinations,
         max_candidates=max_candidates, max_attempts=max_attempts)
 
 
@@ -400,18 +432,25 @@ def _ask_wordlists(read, write):
 
 def _run_target_interview(agent, read, write, initial_text):
     """One-at-a-time adaptive interview. 'skip' skips a question; 'stop' ends it.
-    Returns (seeds, numbers, dates, rounds, transcript)."""
-    seeds, numbers, dates, asked = [], [], [], []
+    Returns (seeds, numbers, dates, languages, rounds, transcript)."""
+    seeds, numbers, dates, languages, asked = [], [], [], [], []
     transcript = [initial_text] if initial_text.strip() else []
+
+    def absorb(proposal):
+        words, nums, dts, langs, question = accept_extraction(proposal)
+        seeds.extend(w for w in words if w not in seeds)
+        numbers.extend(n for n in nums if n not in numbers)
+        dates.extend(d for d in dts if d not in dates)
+        languages.extend(lang for lang in langs if lang not in languages)
+        return question
+
     with _Progress("interviewing: reading target description"):
-        proposal = agent.extract(initial_text, seeds, asked)
-    words, nums, dts, question = accept_extraction(proposal, initial_text)
-    seeds += [w for w in words if w not in seeds]
-    numbers += [n for n in nums if n not in numbers]
-    dates += [d for d in dts if d not in dates]
+        proposal = agent.extract(initial_text, seeds, asked, languages)
+    question = absorb(proposal)
     rounds = 1
     while question and rounds < MAX_FOLLOWUPS:
-        write(f"[gathered so far: {len(seeds)} words, {len(numbers)} numbers, {len(dates)} dates]")
+        write(f"[gathered: {len(seeds)} words, {len(numbers)} numbers, "
+              f"{len(dates)} dates; languages: {', '.join(languages) or 'tbd'}]")
         answer = read(f"{question}  [answer, 'skip', or 'stop' to generate]")
         low = answer.strip().lower()
         if low == "stop":
@@ -421,13 +460,12 @@ def _run_target_interview(agent, read, write, initial_text):
         if text:
             transcript.append(text)
         with _Progress("interviewing: updating target profile"):
-            proposal = agent.extract(text, seeds, asked)
-        words, nums, dts, question = accept_extraction(proposal, text)
-        seeds += [w for w in words if w not in seeds]
-        numbers += [n for n in nums if n not in numbers]
-        dates += [d for d in dts if d not in dates]
+            proposal = agent.extract(text, seeds, asked, languages)
+        question = absorb(proposal)
         rounds += 1
-    return seeds, numbers, dates, rounds, "\n".join(transcript)
+    # Bound the transcript kept for the expansion phase and the session file.
+    joined = "\n".join(transcript)
+    return seeds, numbers, dates, languages, rounds, joined[-4000:]
 
 
 def _parse_selection(answer, count):
@@ -471,7 +509,8 @@ def _expand_phase(agent, read, write, seeds, transcript):
     return added
 
 
-def _finalize(context, seeds, numbers, dates, read, write, output_hint, model, transcript=""):
+def _finalize(context, seeds, numbers, dates, read, write, output_hint, model,
+              transcript="", languages=()):
     if not seeds and not numbers:
         write("No base words were gathered. Add target info or a wordlist to generate.")
     knobs = _ask_knobs(context, read, write)
@@ -481,10 +520,11 @@ def _finalize(context, seeds, numbers, dates, read, write, output_hint, model, t
     output = unique_output(read(f"Wordlist output path [{output_hint}]:").strip() or output_hint)
     session_path = output + ".session.json"
     save_session(session_path, {"context": context, "seeds": seeds, "numbers": numbers,
-                                "dates": dates, "inputs": inputs, "output": output,
-                                "model": model, "transcript": transcript, **knobs})
+                                "dates": dates, "languages": list(languages), "inputs": inputs,
+                                "output": output, "model": model, "transcript": transcript, **knobs})
     write(f"Session saved to {session_path}.")
-    config = build_config(context, seeds, numbers, dates, inputs=inputs, output=output, **knobs)
+    config = build_config(context, seeds, numbers, dates, inputs=inputs, output=output,
+                          languages=languages, **knobs)
     write("Generating the wordlist with the engine (bounded, deduplicated)...")
     started = time.monotonic()
     result = generate_wordlist(config)
@@ -494,7 +534,7 @@ def _finalize(context, seeds, numbers, dates, read, write, output_hint, model, t
     write(f"Wordlist: {output} ({result.accepted} candidates, {result.output_bytes} bytes)")
     write(f"Session: {session_path}")
     write(f"Base words: {len(seeds)} | numbers: {len(numbers)} | dates: {len(dates)} | "
-          f"input wordlists: {len(inputs)}")
+          f"languages: {', '.join(language_codes(languages)) or 'en'} | input wordlists: {len(inputs)}")
     write(f"Generation stopped: {result.stop_reason} after {elapsed:.2f}s")
     return {"written": True, "output": output, "accepted": result.accepted,
             "bytes": result.output_bytes, "session_path": session_path,
@@ -515,16 +555,19 @@ def generate(context, output_hint, agent, read, write):
         initial.append(line)
         if len("\n".join(initial).encode("utf-8")) > 4096:
             raise ValueError("target description exceeds 4096 bytes")
-    seeds, numbers, dates, rounds, transcript = _run_target_interview(agent, read, write, "\n".join(initial))
+    seeds, numbers, dates, languages, rounds, transcript = _run_target_interview(
+        agent, read, write, "\n".join(initial))
     write("")
     write("Gathered base words: " + (", ".join(seeds) or "none"))
     if numbers:
         write("Numbers: " + ", ".join(numbers))
     if dates:
         write("Dates: " + ", ".join(dates))
+    if languages:
+        write("Languages: " + ", ".join(languages))
     seeds += [w for w in _expand_phase(agent, read, write, seeds, transcript) if w not in seeds]
     return _finalize(context, seeds, numbers, dates, read, write, output_hint,
-                     getattr(agent, "model", None), transcript=transcript)
+                     getattr(agent, "model", None), transcript=transcript, languages=languages)
 
 
 def resume(session_path, agent, read, write):
@@ -532,9 +575,12 @@ def resume(session_path, agent, read, write):
     data = load_session(session_path)
     context = data["context"]
     seeds, numbers, dates = list(data.get("seeds", [])), list(data.get("numbers", [])), list(data.get("dates", []))
+    languages = list(data.get("languages", []))
     transcript = data.get("transcript", "")
     write(f"Resumed {context} wordlist session from {session_path}.")
     write("Base words so far: " + (", ".join(seeds) or "none"))
+    if languages:
+        write("Languages: " + ", ".join(languages))
     if read("Add more target information? [y/N]:").strip().lower() in ("y", "yes"):
         write("Describe additional target information.")
         extra = []
@@ -543,12 +589,14 @@ def resume(session_path, agent, read, write):
             if not line:
                 break
             extra.append(line)
-        more_seeds, more_numbers, more_dates, _, more_text = _run_target_interview(agent, read, write, "\n".join(extra))
+        more_seeds, more_numbers, more_dates, more_langs, _, more_text = _run_target_interview(
+            agent, read, write, "\n".join(extra))
         seeds += [w for w in more_seeds if w not in seeds]
         numbers += [n for n in more_numbers if n not in numbers]
         dates += [d for d in more_dates if d not in dates]
-        transcript = (transcript + "\n" + more_text).strip()
+        languages += [lang for lang in more_langs if lang not in languages]
+        transcript = (transcript + "\n" + more_text).strip()[-4000:]
     seeds += [w for w in _expand_phase(agent, read, write, seeds, transcript) if w not in seeds]
     return _finalize(context, seeds, numbers, dates, read, write,
                      data.get("output", f"{context}_wordlist.txt"), getattr(agent, "model", None),
-                     transcript=transcript)
+                     transcript=transcript, languages=languages)
