@@ -20,14 +20,17 @@ class FakeAgent:
         return self._expansions
 
 
-def test_accept_extraction_keeps_only_grounded_tokens():
-    proposal = {"base_words": ["nuno", "invented"], "numbers": ["1986", "7"],
-                "dates": ["1986-05-02"], "next_question": None}
-    words, numbers, dates, question = W.accept_extraction(proposal, "nuno born 1986-05-02")
-    assert words == ["nuno"]           # "invented" not in text, dropped
-    assert numbers == ["1986"]          # "7" not present
-    assert dates == ["1986-05-02"]
-    assert question is None
+def test_accept_extraction_keeps_derived_words_and_sanitizes():
+    # The model is allowed to DERIVE words (biggie from "fat", benfica from Lisbon)
+    # that are not literally in the operator's text. We only sanitise/dedupe.
+    proposal = {"base_words": ["Nuno", "biggie", "big guy", "nuno", "bad\x07ctrl"],
+                "numbers": ["1986", "age 39"], "dates": ["1986-05-02", "not-a-date"],
+                "next_question": "Any pets?"}
+    words, numbers, dates, question = W.accept_extraction(proposal, "")
+    assert words == ["nuno", "biggie", "big", "guy", "badctrl"]  # lowercased, split, deduped, control stripped
+    assert numbers == ["1986", "39"]                              # digits pulled from "age 39"
+    assert dates == ["1986-05-02"]                                # invalid date dropped
+    assert question == "Any pets?"
 
 
 def test_accept_extraction_rejects_bad_schema():
